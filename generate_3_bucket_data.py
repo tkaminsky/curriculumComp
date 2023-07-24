@@ -72,18 +72,19 @@ def oracle(state, env_params, env):
 
 env = particlePush(render_mode = 'human')
 
-ds_size = 3
+ds_size = 50
 num_buckets = 3
-max_run_len = 200
+max_run_len = 500
 
 
 # Create a file to store the data
-f = h5py.File("oracle_data_3_buckets.hdf5", "w")
+f = h5py.File(f"oracle_data_{num_buckets}_buckets_{ds_size}_runs_test.hdf5", "w")
 
 observations = {}
 actions = {}
 run_lengths = np.zeros(ds_size, dtype=np.int32)
 
+# For each run, create random initial conditions and run the oracle
 for i in range(ds_size):
     if i % 10 == 0:
         print(i)
@@ -91,7 +92,7 @@ for i in range(ds_size):
     ball_goals = np.random.randint(30, 370, size=(2,))
     agent_init = np.random.randint(10, 390, size=(2,))
 
-    env.set_env(ball_inits = [ball_inits], ball_goals = [ball_goals])
+    env.set_env(agent_init = agent_init, ball_inits = [ball_inits], ball_goals = [ball_goals])
 
     obs, _ = env.reset()
     t = 0
@@ -108,7 +109,6 @@ for i in range(ds_size):
         actions_now[t] = action
 
         t += 1
-
 
         #action = env.action_space.sample()
         obs, reward, term, trunc, info = env.step(action)
@@ -130,21 +130,55 @@ for i in range(ds_size):
 
 # Sort the data by run length
 sort_idx = np.argsort(run_lengths)
-run_lengths = run_lengths[sort_idx]
+# run_lengths = run_lengths[sort_idx]
+print(sort_idx)
 print(run_lengths)
-observations = {k: observations[k] for k in sort_idx}
-actions = {k: actions[k] for k in sort_idx}
-
-# Turn observations and actions into numpy arrays in order of increasing run length
-observations = np.concatenate([observations[i] for i in range(ds_size)], axis=0)
-
-actions = np.concatenate([actions[i] for i in range(ds_size)], axis=0)
-
-print(observations[run_lengths[0] - 1:run_lengths[0] + 1])
-print(observations[run_lengths[0] + run_lengths[1] - 1:run_lengths[0] + run_lengths[1] + 1])
-print(observations[run_lengths[0] + run_lengths[1] + run_lengths[2] - 1:run_lengths[0] + run_lengths[1] + run_lengths[2] + 1])
 
 
+total_len = 0
+for idx in sort_idx:
+    observations[idx] = np.array(observations[idx])
+    actions[idx] = np.array(actions[idx])
+    total_len += observations[idx].shape[0]
+
+# Contains all of the data in order
+observations_total = np.zeros((total_len, 6))
+actions_total = np.zeros((total_len, 1))
+
+print(f"The total length of the dataset is {total_len}")
+
+# Add all the data to a vector
+for i in range(len(sort_idx)):
+    # The start position of the current run
+    idx_in_total = sum([run_lengths[sort_idx[v]] for v in range(i)])
+    # The length of the current run to be added
+    len_ep = run_lengths[sort_idx[i]]
+    # Add the data to the total dataset
+    observations_total[idx_in_total:idx_in_total + len_ep] = observations[sort_idx[i]]
+    actions_total[idx_in_total:idx_in_total + len_ep] = actions[sort_idx[i]]
+
+# Buckets will be evenly split
+bucket_sizes = [total_len // num_buckets] * num_buckets
+bucket_sizes[-1] += total_len % num_buckets
+
+# Create the datasets for each bucket
+for i, bucket in enumerate(['easy', 'medium', 'hard']):
+    group = f.create_group(bucket)
+    group.create_dataset("observations", (bucket_sizes[i], 6), dtype=np.float32)
+    group.create_dataset("actions", (bucket_sizes[i], 1), dtype=np.int32)
+    
+    # Add corresponding 1/3 of the data to the bucket
+    group['observations'][:] = observations_total[sum(bucket_sizes[:i]):sum(bucket_sizes[:i+1])]
+    group['actions'][:] = actions_total[sum(bucket_sizes[:i]):sum(bucket_sizes[:i+1])]
+
+
+# Print the last element of observations_total to make sure it's correct
+print(observations_total[-1])
+
+
+# Check that the buckets have the right sizes
+for bucket in ['easy', 'medium', 'hard']:
+    print(f"Bucket {bucket} has size {f[bucket]['observations'].shape[0]}")
 
 # Save the data
 f.close()
@@ -153,4 +187,9 @@ f.close()
 # Plot a histogram of the run lengths
 import matplotlib.pyplot as plt
 plt.hist(run_lengths)
+
 plt.show()
+
+# Save the plot
+
+plt.savefig("run_lengths.png")

@@ -33,15 +33,15 @@ class particlePush(Env):
         self.agent_weight = 1
         self.agent_size = 10
         self.ball_weight = 1e-6
-        self.v = 50
+        self.v = 30
         self.reward = 0
-        self.reward_threshold = 5
+        self.reward_threshold = 10
         self.reward_on_success = 1
         self.reward_on_failure = 0
         self.t = 0
 
         # Maximum number of steps
-        self.T = 199
+        self.T = 499
         self.goal_reached = False
 
         # Observation space is a standardized set of 2D coordinates for the agent, ball, and goal

@@ -4,3 +4,6 @@
 *.pth
 *.ckpt
 *.hdf5
+
+__pycache__
+wandb
