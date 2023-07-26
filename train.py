@@ -12,6 +12,9 @@ import argparse
 MAX_EPOCHS = 100
 B = 256
 
+MAX_ITERS = 150_000
+MAX_ITERS = 500_000
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--order", "-o", help="The kind of dataset ordering to use", default="random")
 parser.add_argument("--dataset", "-d", help="The dataset to use", default="oracle_data_max_350_step_10")
@@ -21,11 +24,11 @@ order = parser.parse_args().order
 ds_file = parser.parse_args().dataset
 # use_curriculum = parser.parse_args().use_curriculum
 # use_curriculum = False
-use_curriculum = True
+use_curriculum = False
 run = wandb.init(
-    project="BC-ParticlePush-curriculum_test",
-    name=f'Test-{order}-{ds_file}',
-    # name=f"supervised-{ds_file}",
+    project="BC-ParticlePush-curriculum-3-buckets",
+    # name=f'Test-{order}-2-{ds_file}',
+    name=f"supervised-{ds_file}",
     notes="Full dataset, larger network, epoch schedule.",
 )
 
@@ -116,9 +119,15 @@ model.train()
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 loss_fn = nn.MSELoss()
 
+iter_sched = [50_000, 50_000, 50_000, MAX_ITERS - 150_000]
+
+iter_count = 0
+bucket_count = 0
+
 if use_curriculum:
     # For each set of buckets
     for cur_num_buckets in range(1, len(buckets) + 1):
+        bucket_count += 1
         current_buckets = buckets[:cur_num_buckets]
 
         print(f"On dataset {cur_num_buckets} / {len(buckets)}")
@@ -127,17 +136,56 @@ if use_curriculum:
         curr_ds_len = len(actions)
         print(f"Training on {curr_ds_len} samples")
 
-        # While less than MAX_EPOCHS have passed and the loss is still decreasing
-        for epoch in range(epoch_sched[cur_num_buckets]):
+
+        while iter_count < sum(iter_sched[:bucket_count]):
             # Shuffle the dataset
             indices = np.arange(curr_ds_len)
             np.random.shuffle(indices)
             actions = actions[indices]
             observations = observations[indices]
-            
-            if epoch % 50 == 0:
-                print(f"Epoch {epoch} / {epoch_sched[cur_num_buckets]}")
+
             for iter in range(int(np.round(curr_ds_len / B))):
+                
+                if iter_count % 25_000 == 0:
+                    print(f"Iteration {iter_count} / {iter_sched[bucket_count]}")
+
+                    # Evaluate the model
+                    num_correct = 0
+                    model.eval()
+                    with torch.no_grad():
+                        for i in range(num_eval_samples):
+                            if i % 10 == 0:
+                                print(f"Sample {i} / {num_eval_samples}")
+                            # Create the environment
+                            env = particlePush(render_mode = 'human')
+                            env.set_env(agent_init = agent_inits[i], ball_inits = [ball_inits[i]], ball_goals = [ball_goals[i]])
+                            obs, _ = env.reset()
+                            # Run the environment
+                            while True:
+                                # Get the action from the model
+                                obs = torch.tensor(obs).unsqueeze(0).float()
+
+                                action_arr = model(obs)
+
+                                action = torch.argmax(action_arr).item()
+
+
+                                # Take the action
+                                obs, _, term, trunc, _ = env.step(action)
+                                env.render()
+                                # If the ball has reached the goal, break
+                                if term:
+                                    num_correct += 1
+                                    break
+                                if trunc:
+                                    break
+                        # Log the percentage of successful runs in wandb vs the number of buckets
+                        wandb.log({"success_rate": num_correct / num_eval_samples, "num_buckets": cur_num_buckets})
+                        print(f"Success rate: {num_correct / num_eval_samples}\n")
+                        # env.close()
+                        # Save the model
+                    model.train()
+
                 # Get the current batch
                 if iter == int(np.round(curr_ds_len / B)) - 1:
                     batch_actions = actions[iter * B :].squeeze( axis = 1)
@@ -158,6 +206,9 @@ if use_curriculum:
 
                 # Get the loss
                 loss = loss_fn(output, batch_actions)
+
+                iter_count += 1
+
                 # Backpropagate
                 optimizer.zero_grad()
                 loss.backward()
@@ -242,40 +293,75 @@ if use_curriculum:
             wandb.log({"success_rate": num_correct / num_eval_samples, "num_buckets": cur_num_buckets})
             print(f"Success rate: {num_correct / num_eval_samples}\n")
             # env.close()
-        # Save the model
-        model.train()
-        torch.save(model.state_dict(), f"model_{order}_{ds_file}.pt")
+            # Save the model
+            model.train()
+            torch.save(model.state_dict(), f"model_{order}_{ds_file}.pt")
 else:
     print("Not using a curriculum")
-    for _ in range(50):
-        current_buckets = ['easy', 'medium', 'hard']
-        # current_buckets = [str(10 * i) for i in range(1, 36)]
+    # For each set of buckets
+    for cur_num_buckets in range(1, len(buckets) + 1):
+        bucket_count += 1
+        # current_buckets = buckets[:cur_num_buckets]
+        current_buckets = buckets
+
+        print(f"On dataset {cur_num_buckets} / {len(buckets)}")
         print("Using buckets: " + str(current_buckets))
         actions, observations = get_current_ds(ds, current_buckets)
         curr_ds_len = len(actions)
-
-        # Take a subset of 100
-        actions = actions#[:500]
-        observations = observations#[:500]
-        curr_ds_len = len(actions)
-
         print(f"Training on {curr_ds_len} samples")
 
 
-        # While less than MAX_EPOCHS have passed and the loss is still decreasing
-        for epoch in range(MAX_EPOCHS):
+        while iter_count < sum(iter_sched[:bucket_count]):
             # Shuffle the dataset
             indices = np.arange(curr_ds_len)
             np.random.shuffle(indices)
             actions = actions[indices]
             observations = observations[indices]
-            
-            if epoch % 50 == 0:
-                print(f"Epoch {epoch} / {MAX_EPOCHS}")
 
-            for iter in range(int(curr_ds_len // B + 1)):
+            for iter in range(int(np.round(curr_ds_len / B))):
+                
+                if iter_count % 25_000 == 0:
+                    print(f"Iteration {iter_count} / {iter_sched[bucket_count]}")
+
+                    # Evaluate the model
+                    num_correct = 0
+                    model.eval()
+                    with torch.no_grad():
+                        for i in range(num_eval_samples):
+                            if i % 10 == 0:
+                                print(f"Sample {i} / {num_eval_samples}")
+                            # Create the environment
+                            env = particlePush(render_mode = 'human')
+                            env.set_env(agent_init = agent_inits[i], ball_inits = [ball_inits[i]], ball_goals = [ball_goals[i]])
+                            obs, _ = env.reset()
+                            # Run the environment
+                            while True:
+                                # Get the action from the model
+                                obs = torch.tensor(obs).unsqueeze(0).float()
+
+                                action_arr = model(obs)
+
+                                action = torch.argmax(action_arr).item()
+
+
+                                # Take the action
+                                obs, _, term, trunc, _ = env.step(action)
+                                env.render()
+                                # If the ball has reached the goal, break
+                                if term:
+                                    num_correct += 1
+                                    break
+                                if trunc:
+                                    break
+                        # Log the percentage of successful runs in wandb vs the number of buckets
+                        wandb.log({"success_rate": num_correct / num_eval_samples, "num_buckets": cur_num_buckets})
+                        print(f"Success rate: {num_correct / num_eval_samples}\n")
+                        # env.close()
+                        # Save the model
+                    model.train()
+
                 # Get the current batch
-                if iter == int(curr_ds_len // B + 1) - 1:
+                if iter == int(np.round(curr_ds_len / B)) - 1:
                     batch_actions = actions[iter * B :].squeeze( axis = 1)
                     batch_observations = observations[iter * B :]
                     batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
@@ -291,9 +377,12 @@ else:
                 with torch.no_grad():
                     action_accuracy = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
                     wandb.log({"action_accuracy": action_accuracy})
-                    
 
+                # Get the loss
                 loss = loss_fn(output, batch_actions)
+
+                iter_count += 1
+
                 # Backpropagate
                 optimizer.zero_grad()
                 loss.backward()
@@ -301,6 +390,7 @@ else:
                 # Log the loss
                 avg_loss = loss.item()
                 wandb.log({"loss": avg_loss})
+
 
         print("Evaluating model")
 
@@ -328,6 +418,11 @@ else:
 
                 # Get the output from the model
                 output = model(torch.tensor(batch_observations).float())
+
+                # Calculate the action accuracy
+                with torch.no_grad():
+                    action_accuracy = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
+                    wandb.log({"test_accuracy": action_accuracy})
                 # Get the loss
                 loss = loss_fn(output, batch_actions)
 
@@ -337,7 +432,6 @@ else:
                 avg_loss = loss.item()
                 test_losses[iter] = avg_loss
             wandb.log({"test_loss": np.average(test_losses), "test_acc": np.average(test_accs)})
-            
         
         # Evaluate the model
         num_correct = 0
@@ -370,9 +464,9 @@ else:
                     if trunc:
                         break
             # Log the percentage of successful runs in wandb vs the number of buckets
-            wandb.log({"success_rate": num_correct / num_eval_samples})
+            wandb.log({"success_rate": num_correct / num_eval_samples, "num_buckets": cur_num_buckets})
             print(f"Success rate: {num_correct / num_eval_samples}\n")
             # env.close()
-        # Save the model
-        model.train()
-        torch.save(model.state_dict(), f"model_{order}_{ds_file}_sup.pt")
+            # Save the model
+            model.train()
+            torch.save(model.state_dict(), f"model_{order}_{ds_file}.pt")
