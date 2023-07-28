@@ -24,15 +24,13 @@ order = parser.parse_args().order
 ds_file = parser.parse_args().dataset
 # use_curriculum = parser.parse_args().use_curriculum
 # use_curriculum = False
-use_curriculum = False
+use_curriculum = True
 run = wandb.init(
     project="BC-ParticlePush-curriculum-3-buckets",
-    # name=f'Test-{order}-2-{ds_file}',
-    name=f"supervised-{ds_file}",
-    notes="Full dataset, larger network, epoch schedule.",
+    name=f'Sm_Test-{order}-{ds_file}',
+    # name=f"hard-supervised-{ds_file}",
+    notes="Full dataset, larger network, fewer epochs.",
 )
-
-epoch_sched = {1: 300, 2:300, 3: 300}
 
 class NeuralNetwork(nn.Module):
     def __init__(self):
@@ -119,7 +117,7 @@ model.train()
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 loss_fn = nn.MSELoss()
 
-iter_sched = [50_000, 50_000, 50_000, MAX_ITERS - 150_000]
+iter_sched = [10_000, 10_000, 10_000, MAX_ITERS - 150_000]
 
 iter_count = 0
 bucket_count = 0
@@ -146,7 +144,7 @@ if use_curriculum:
 
             for iter in range(int(np.round(curr_ds_len / B))):
                 
-                if iter_count % 25_000 == 0:
+                if iter_count % 2_000 == 0:
                     print(f"Iteration {iter_count} / {iter_sched[bucket_count]}")
 
                     # Evaluate the model
@@ -219,45 +217,6 @@ if use_curriculum:
 
 
         print("Evaluating model")
-
-        # Evaluate the model on the test set
-        test_actions, test_observations = get_current_ds(test_ds, current_buckets)
-        test_ds_len = len(test_actions)
-
-        print(f"Evaluating on {test_ds_len} samples")
-
-        model.eval()
-        with torch.no_grad():
-            # Run the model on the test set
-            test_losses = np.zeros(int(np.round(test_ds_len / B)))
-            test_accs = np.zeros(int(np.round(test_ds_len / B)))
-            for iter in range(int(np.round(test_ds_len / B))):
-                # Get the current batch
-                if iter == int(np.round(test_ds_len / B)) - 1:
-                    batch_actions = test_actions[iter * B :].squeeze( axis = 1)
-                    batch_observations = test_observations[iter * B :]
-                    batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
-                else:
-                    batch_actions = test_actions[iter * B : (iter + 1) * B].squeeze( axis = 1)
-                    batch_observations = test_observations[iter * B : (iter + 1) * B]
-                    batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
-
-                # Get the output from the model
-                output = model(torch.tensor(batch_observations).float())
-
-                # Calculate the action accuracy
-                with torch.no_grad():
-                    action_accuracy = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
-                    wandb.log({"test_accuracy": action_accuracy})
-                # Get the loss
-                loss = loss_fn(output, batch_actions)
-
-                test_accs[iter] = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
-
-                # Log the loss
-                avg_loss = loss.item()
-                test_losses[iter] = avg_loss
-            wandb.log({"test_loss": np.average(test_losses), "test_acc": np.average(test_accs)})
         
         # Evaluate the model
         num_correct = 0
@@ -295,14 +254,15 @@ if use_curriculum:
             # env.close()
             # Save the model
             model.train()
-            torch.save(model.state_dict(), f"model_{order}_{ds_file}.pt")
+            torch.save(model.state_dict(), f"model_{order}_{ds_file}_short.pt")
 else:
     print("Not using a curriculum")
     # For each set of buckets
     for cur_num_buckets in range(1, len(buckets) + 1):
         bucket_count += 1
         # current_buckets = buckets[:cur_num_buckets]
-        current_buckets = buckets
+        # current_buckets = [buckets]
+        current_buckets = ['hard']
 
         print(f"On dataset {cur_num_buckets} / {len(buckets)}")
         print("Using buckets: " + str(current_buckets))
@@ -394,44 +354,44 @@ else:
 
         print("Evaluating model")
 
-        # Evaluate the model on the test set
-        test_actions, test_observations = get_current_ds(test_ds, current_buckets)
-        test_ds_len = len(test_actions)
+        # # Evaluate the model on the test set
+        # test_actions, test_observations = get_current_ds(test_ds, current_buckets)
+        # test_ds_len = len(test_actions)
 
-        print(f"Evaluating on {test_ds_len} samples")
+        # print(f"Evaluating on {test_ds_len} samples")
 
-        model.eval()
-        with torch.no_grad():
-            # Run the model on the test set
-            test_losses = np.zeros(int(np.round(test_ds_len / B)))
-            test_accs = np.zeros(int(np.round(test_ds_len / B)))
-            for iter in range(int(np.round(test_ds_len / B))):
-                # Get the current batch
-                if iter == int(np.round(test_ds_len / B)) - 1:
-                    batch_actions = test_actions[iter * B :].squeeze( axis = 1)
-                    batch_observations = test_observations[iter * B :]
-                    batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
-                else:
-                    batch_actions = test_actions[iter * B : (iter + 1) * B].squeeze( axis = 1)
-                    batch_observations = test_observations[iter * B : (iter + 1) * B]
-                    batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
+        # model.eval()
+        # with torch.no_grad():
+        #     # Run the model on the test set
+        #     test_losses = np.zeros(int(np.round(test_ds_len / B)))
+        #     test_accs = np.zeros(int(np.round(test_ds_len / B)))
+        #     for iter in range(int(np.round(test_ds_len / B))):
+        #         # Get the current batch
+        #         if iter == int(np.round(test_ds_len / B)) - 1:
+        #             batch_actions = test_actions[iter * B :].squeeze( axis = 1)
+        #             batch_observations = test_observations[iter * B :]
+        #             batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
+        #         else:
+        #             batch_actions = test_actions[iter * B : (iter + 1) * B].squeeze( axis = 1)
+        #             batch_observations = test_observations[iter * B : (iter + 1) * B]
+        #             batch_actions = torch.nn.functional.one_hot(torch.tensor(batch_actions).long(), num_classes=17).float()
 
-                # Get the output from the model
-                output = model(torch.tensor(batch_observations).float())
+        #         # Get the output from the model
+        #         output = model(torch.tensor(batch_observations).float())
 
-                # Calculate the action accuracy
-                with torch.no_grad():
-                    action_accuracy = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
-                    wandb.log({"test_accuracy": action_accuracy})
-                # Get the loss
-                loss = loss_fn(output, batch_actions)
+        #         # Calculate the action accuracy
+        #         with torch.no_grad():
+        #             action_accuracy = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
+        #             wandb.log({"test_accuracy": action_accuracy})
+        #         # Get the loss
+        #         loss = loss_fn(output, batch_actions)
 
-                test_accs[iter] = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
+        #         test_accs[iter] = torch.sum(torch.argmax(output, dim=1) == torch.argmax(batch_actions, dim=1)).item() / B
 
-                # Log the loss
-                avg_loss = loss.item()
-                test_losses[iter] = avg_loss
-            wandb.log({"test_loss": np.average(test_losses), "test_acc": np.average(test_accs)})
+        #         # Log the loss
+        #         avg_loss = loss.item()
+        #         test_losses[iter] = avg_loss
+        #     wandb.log({"test_loss": np.average(test_losses), "test_acc": np.average(test_accs)})
         
         # Evaluate the model
         num_correct = 0
